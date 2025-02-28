@@ -12,7 +12,8 @@ import shutil
 import sys
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from types import NoneType
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import docutils.readers.doctree
@@ -23,6 +24,7 @@ from docutils.io import DocTreeInput, StringOutput
 
 from sphinx import __display_version__, package_dir
 from sphinx import version_info as sphinx_version
+from sphinx._cli.util.colour import bold
 from sphinx.builders import Builder
 from sphinx.builders.html._assets import (
     _CascadingStyleSheet,
@@ -30,7 +32,7 @@ from sphinx.builders.html._assets import (
     _JavaScript,
 )
 from sphinx.builders.html._build_info import BuildInfo
-from sphinx.config import ENUM, Config
+from sphinx.config import ENUM
 from sphinx.deprecation import _deprecation_warning
 from sphinx.domains import Index, IndexEntry
 from sphinx.environment.adapters.asset import ImageAdapter
@@ -45,7 +47,6 @@ from sphinx.util import logging
 from sphinx.util._pathlib import _StrPath
 from sphinx.util._timestamps import _format_rfc3339_microseconds
 from sphinx.util._uri import is_url
-from sphinx.util.console import bold
 from sphinx.util.display import progress_message, status_iterator
 from sphinx.util.docutils import new_document
 from sphinx.util.fileutil import copy_asset
@@ -65,12 +66,13 @@ from sphinx.writers.html5 import HTML5Translator
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Set
-    from typing import TypeAlias
+    from typing import Any, TypeAlias
 
     from docutils.nodes import Node
     from docutils.readers import Reader
 
     from sphinx.application import Sphinx
+    from sphinx.config import Config
     from sphinx.environment import BuildEnvironment
     from sphinx.util.typing import ExtensionMetadata
 
@@ -104,9 +106,7 @@ def convert_locale_to_language_tag(locale: str | None) -> str | None:
 
 
 class StandaloneHTMLBuilder(Builder):
-    """
-    Builds standalone HTML docs.
-    """
+    """Builds standalone HTML docs."""
 
     name = 'html'
     format = 'html'
@@ -199,8 +199,8 @@ class StandaloneHTMLBuilder(Builder):
             if js_file.is_file():
                 return js_file
 
-        js_file = Path(
-            package_dir, 'locale', self.config.language, 'LC_MESSAGES', 'sphinx.js'
+        js_file = package_dir.joinpath(
+            'locale', self.config.language, 'LC_MESSAGES', 'sphinx.js'
         )
         if js_file.is_file():
             return js_file
@@ -276,7 +276,7 @@ class StandaloneHTMLBuilder(Builder):
         for filename in self._get_style_filenames():
             self.add_css_file(filename, priority=200)
 
-        for filename, attrs in self.app.registry.css_files:
+        for filename, attrs in self.env._registry.css_files:
             self.add_css_file(filename, **attrs)
 
         for filename, attrs in self.get_builder_config('css_files', 'html'):
@@ -303,7 +303,7 @@ class StandaloneHTMLBuilder(Builder):
         self.add_js_file('doctools.js', priority=200)
         self.add_js_file('sphinx_highlight.js', priority=200)
 
-        for filename, attrs in self.app.registry.js_files:
+        for filename, attrs in self.env._registry.js_files:
             self.add_js_file(filename or '', **attrs)
 
         for filename, attrs in self.get_builder_config('js_files', 'html'):
@@ -328,7 +328,7 @@ class StandaloneHTMLBuilder(Builder):
             return name
         else:
             # not given: choose a math_renderer from registered ones as possible
-            renderers = list(self.app.registry.html_inline_math_renderers)
+            renderers = list(self.env._registry.html_inline_math_renderers)
             if len(renderers) == 1:
                 # only default math_renderer (mathjax) is registered
                 return renderers[0]
@@ -363,7 +363,7 @@ class StandaloneHTMLBuilder(Builder):
                     msg = __(
                         'build_info mismatch, copying .buildinfo to .buildinfo.bak'
                     )
-                    logger.info(bold(__('building [html]: ')) + msg)
+                    logger.info(bold(__('building [html]: ')) + msg)  # NoQA: G003
 
                 yield from self.env.found_docs
                 return
@@ -378,7 +378,7 @@ class StandaloneHTMLBuilder(Builder):
                 # Let users know they have a newer template
                 if template_mtime > old_mtime:
                     logger.info(
-                        bold('building [html]: ')
+                        bold('building [html]: ')  # NoQA: G003
                         + __(
                             'template %s has been changed since the previous build, '
                             'all docs will be rebuilt'
@@ -516,9 +516,9 @@ class StandaloneHTMLBuilder(Builder):
                 ))
 
         # add assets registered after ``Builder.init()``.
-        for css_filename, attrs in self.app.registry.css_files:
+        for css_filename, attrs in self.env._registry.css_files:
             self.add_css_file(css_filename, **attrs)
-        for js_filename, attrs in self.app.registry.js_files:
+        for js_filename, attrs in self.env._registry.js_files:
             self.add_js_file(js_filename or '', **attrs)
 
         # back up _css_files and _js_files to allow adding CSS/JS files to a specific page.
@@ -673,6 +673,7 @@ class StandaloneHTMLBuilder(Builder):
         metatags = self.docwriter.clean_meta
 
         ctx = self.get_doc_context(docname, body, metatags)
+        ctx['has_maths_elements'] = self.docwriter._has_maths_elements
         self.handle_page(docname, ctx, event_arg=doctree)
 
     def write_doc_serialized(self, docname: str, doctree: nodes.document) -> None:
@@ -711,7 +712,7 @@ class StandaloneHTMLBuilder(Builder):
     def gen_additional_pages(self) -> None:
         # additional pages from conf.py
         for pagename, template in self.config.html_additional_pages.items():
-            logger.info(pagename + ' ', nonl=True)
+            logger.info('%s ', pagename, nonl=True)
             self.handle_page(pagename, {}, template)
 
         # the search page
@@ -771,7 +772,7 @@ class StandaloneHTMLBuilder(Builder):
 
     def copy_image_files(self) -> None:
         if self.images:
-            stringify_func = ImageAdapter(self.app.env).get_original_image_uri
+            stringify_func = ImageAdapter(self.env).get_original_image_uri
             ensuredir(self._images_dir)
             for src in status_iterator(
                 self.images,
@@ -1054,7 +1055,7 @@ class StandaloneHTMLBuilder(Builder):
                 if matched and has_wildcard(pattern):
                     # warn if both patterns contain wildcards
                     if has_wildcard(matched):
-                        logger.warning(msg, pagename, matched)
+                        logger.warning(msg, pagename, matched, pattern)
                     # else the already matched pattern is more specific
                     # than the present one, because it contains no wildcard
                     continue
@@ -1185,20 +1186,21 @@ class StandaloneHTMLBuilder(Builder):
         self._js_files[:] = self._orig_js_files
 
         self.update_page_context(pagename, templatename, ctx, event_arg)
-        if new_template := self.app.emit_firstresult(
+        if new_template := self.events.emit_firstresult(
             'html-page-context', pagename, templatename, ctx, event_arg
         ):
             templatename = new_template
 
         # sort JS/CSS before rendering HTML
         try:  # NoQA: SIM105
-            # Convert script_files to list to support non-list script_files (refs: #8889)
+            # Convert script_files to list to support non-list script_files
+            # See: https://github.com/sphinx-doc/sphinx/issues/8889
             ctx['script_files'] = sorted(
                 ctx['script_files'], key=lambda js: js.priority
             )
         except AttributeError:
             # Skip sorting if users modifies script_files directly (maybe via `html_context`).
-            # refs: #8885
+            # See: https://github.com/sphinx-doc/sphinx/issues/8885
             #
             # Note: priority sorting feature will not work in this case.
             pass
@@ -1272,7 +1274,7 @@ class StandaloneHTMLBuilder(Builder):
             else:
                 with open(search_index_tmp, 'wb') as fb:
                     self.indexer.dump(fb, self.indexer_format)
-            os.replace(search_index_tmp, search_index_path)
+            Path(search_index_tmp).replace(search_index_path)
 
 
 def convert_html_css_files(app: Sphinx, config: Config) -> None:
@@ -1439,56 +1441,78 @@ def setup(app: Sphinx) -> ExtensionMetadata:
     app.add_builder(StandaloneHTMLBuilder)
 
     # config values
-    app.add_config_value('html_theme', 'alabaster', 'html')
-    app.add_config_value('html_theme_path', [], 'html')
-    app.add_config_value('html_theme_options', {}, 'html')
+    app.add_config_value('html_theme', 'alabaster', 'html', types=frozenset({str}))
+    app.add_config_value('html_theme_path', [], 'html', types=frozenset({list, tuple}))
+    app.add_config_value('html_theme_options', {}, 'html', types=frozenset({dict}))
     app.add_config_value(
         'html_title',
         lambda c: _('%s %s documentation') % (c.project, c.release),
         'html',
-        str,
+        types=frozenset({str}),
     )
-    app.add_config_value('html_short_title', lambda self: self.html_title, 'html')
-    app.add_config_value('html_style', None, 'html', {list, str})
-    app.add_config_value('html_logo', None, 'html', str)
-    app.add_config_value('html_favicon', None, 'html', str)
-    app.add_config_value('html_css_files', [], 'html')
-    app.add_config_value('html_js_files', [], 'html')
-    app.add_config_value('html_static_path', [], 'html')
-    app.add_config_value('html_extra_path', [], 'html')
-    app.add_config_value('html_last_updated_fmt', None, 'html', str)
-    app.add_config_value('html_last_updated_use_utc', False, 'html', types={bool})
-    app.add_config_value('html_sidebars', {}, 'html')
-    app.add_config_value('html_additional_pages', {}, 'html')
-    app.add_config_value('html_domain_indices', True, 'html', types={set, list})
-    app.add_config_value('html_permalinks', True, 'html')
-    app.add_config_value('html_permalinks_icon', '¶', 'html')
-    app.add_config_value('html_use_index', True, 'html')
-    app.add_config_value('html_split_index', False, 'html')
-    app.add_config_value('html_copy_source', True, 'html')
-    app.add_config_value('html_show_sourcelink', True, 'html')
-    app.add_config_value('html_sourcelink_suffix', '.txt', 'html')
-    app.add_config_value('html_use_opensearch', '', 'html')
-    app.add_config_value('html_file_suffix', None, 'html', str)
-    app.add_config_value('html_link_suffix', None, 'html', str)
-    app.add_config_value('html_show_copyright', True, 'html')
-    app.add_config_value('html_show_search_summary', True, 'html')
-    app.add_config_value('html_show_sphinx', True, 'html')
-    app.add_config_value('html_context', {}, 'html')
-    app.add_config_value('html_output_encoding', 'utf-8', 'html')
-    app.add_config_value('html_compact_lists', True, 'html')
-    app.add_config_value('html_secnumber_suffix', '. ', 'html')
-    app.add_config_value('html_search_language', None, 'html', str)
-    app.add_config_value('html_search_options', {}, 'html')
-    app.add_config_value('html_search_scorer', '', '')
-    app.add_config_value('html_scaled_image_link', True, 'html')
-    app.add_config_value('html_baseurl', '', 'html')
-    # removal is indefinitely on hold (ref: https://github.com/sphinx-doc/sphinx/issues/10265)
     app.add_config_value(
-        'html_codeblock_linenos_style', 'inline', 'html', ENUM('table', 'inline')
+        'html_short_title', lambda self: self.html_title, 'html', types=frozenset({str})
     )
-    app.add_config_value('html_math_renderer', None, 'env')
-    app.add_config_value('html4_writer', False, 'html')
+    app.add_config_value(
+        'html_style', None, 'html', types=frozenset({list, str, tuple})
+    )
+    app.add_config_value('html_logo', None, 'html', types=frozenset({str}))
+    app.add_config_value('html_favicon', None, 'html', types=frozenset({str}))
+    app.add_config_value('html_css_files', [], 'html', types=frozenset({list, tuple}))
+    app.add_config_value('html_js_files', [], 'html', types=frozenset({list, tuple}))
+    app.add_config_value('html_static_path', [], 'html', types=frozenset({list, tuple}))
+    app.add_config_value('html_extra_path', [], 'html', types=frozenset({list, tuple}))
+    app.add_config_value('html_last_updated_fmt', None, 'html', types=frozenset({str}))
+    app.add_config_value(
+        'html_last_updated_use_utc', False, 'html', types=frozenset({bool})
+    )
+    app.add_config_value('html_sidebars', {}, 'html', types=frozenset({dict}))
+    app.add_config_value('html_additional_pages', {}, 'html', types=frozenset({dict}))
+    app.add_config_value(
+        'html_domain_indices',
+        True,
+        'html',
+        types=frozenset({frozenset, list, set, tuple}),
+    )
+    app.add_config_value('html_permalinks', True, 'html', types=frozenset({bool}))
+    app.add_config_value('html_permalinks_icon', '¶', 'html', types=frozenset({str}))
+    app.add_config_value('html_use_index', True, 'html', types=frozenset({bool}))
+    app.add_config_value('html_split_index', False, 'html', types=frozenset({bool}))
+    app.add_config_value('html_copy_source', True, 'html', types=frozenset({bool}))
+    app.add_config_value('html_show_sourcelink', True, 'html', types=frozenset({bool}))
+    app.add_config_value(
+        'html_sourcelink_suffix', '.txt', 'html', types=frozenset({str})
+    )
+    app.add_config_value('html_use_opensearch', '', 'html', types=frozenset({str}))
+    app.add_config_value('html_file_suffix', None, 'html', types=frozenset({str}))
+    app.add_config_value('html_link_suffix', None, 'html', types=frozenset({str}))
+    app.add_config_value('html_show_copyright', True, 'html', types=frozenset({bool}))
+    app.add_config_value(
+        'html_show_search_summary', True, 'html', types=frozenset({bool})
+    )
+    app.add_config_value('html_show_sphinx', True, 'html', types=frozenset({bool}))
+    app.add_config_value('html_context', {}, 'html', types=frozenset({dict}))
+    app.add_config_value(
+        'html_output_encoding', 'utf-8', 'html', types=frozenset({str})
+    )
+    app.add_config_value('html_compact_lists', True, 'html', types=frozenset({bool}))
+    app.add_config_value('html_secnumber_suffix', '. ', 'html', types=frozenset({str}))
+    app.add_config_value('html_search_language', None, 'html', types=frozenset({str}))
+    app.add_config_value('html_search_options', {}, 'html', types=frozenset({dict}))
+    app.add_config_value('html_search_scorer', '', '', types=frozenset({str}))
+    app.add_config_value(
+        'html_scaled_image_link', True, 'html', types=frozenset({bool})
+    )
+    app.add_config_value('html_baseurl', '', 'html', types=frozenset({str}))
+    # removal is indefinitely on hold
+    # See: https://github.com/sphinx-doc/sphinx/issues/10265
+    app.add_config_value(
+        'html_codeblock_linenos_style', 'inline', 'html', types=ENUM('table', 'inline')
+    )
+    app.add_config_value(
+        'html_math_renderer', None, 'env', types=frozenset({str, NoneType})
+    )
+    app.add_config_value('html4_writer', False, 'html', types=frozenset({bool}))
 
     # events
     app.add_event('html-collect-pages')
@@ -1508,9 +1532,6 @@ def setup(app: Sphinx) -> ExtensionMetadata:
 
     # load default math renderer
     app.setup_extension('sphinx.ext.mathjax')
-
-    # load transforms for HTML builder
-    app.setup_extension('sphinx.builders.html.transforms')
 
     return {
         'version': 'builtin',

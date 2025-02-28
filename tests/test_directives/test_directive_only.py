@@ -1,13 +1,19 @@
 """Test the only directive with the test root."""
 
+from __future__ import annotations
+
 import re
+from typing import TYPE_CHECKING
 
 import pytest
 from docutils import nodes
 
+if TYPE_CHECKING:
+    from sphinx.testing.util import SphinxTestApp
+
 
 @pytest.mark.sphinx('text', testroot='directive-only')
-def test_sectioning(app):
+def test_sectioning(app: SphinxTestApp) -> None:
     def getsects(section):
         if not isinstance(section, nodes.section):
             return [getsects(n) for n in section.children]
